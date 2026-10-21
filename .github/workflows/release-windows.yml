@@ -1,0 +1,93 @@
+name: Build and release Windows executable
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Read application version
+        id: version
+        shell: pwsh
+        run: |
+          $source = Get-Content -Raw "pcl_companion/__init__.py"
+          if ($source -notmatch '__version__\s*=\s*"([^"]+)"') {
+            throw "Unable to read __version__"
+          }
+          "tag=v$($Matches[1])" >> $env:GITHUB_OUTPUT
+
+      - name: Check whether release already exists
+        id: release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          gh release view $env:TAG --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            "exists=true" >> $env:GITHUB_OUTPUT
+          } else {
+            "exists=false" >> $env:GITHUB_OUTPUT
+          }
+          exit 0
+
+      - name: Install dependencies
+        if: steps.release.outputs.exists != 'true'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run tests
+        if: steps.release.outputs.exists != 'true'
+        run: |
+          python -m compileall -q app.py pcl_companion
+          python -m unittest discover -s tests -v
+
+      - name: Build executable
+        if: steps.release.outputs.exists != 'true'
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Write SHA-256 checksum
+        if: steps.release.outputs.exists != 'true'
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash -Algorithm SHA256 "dist/PCL-Companion.exe").Hash.ToLowerInvariant()
+          "$hash  PCL-Companion.exe" | Set-Content -NoNewline "dist/PCL-Companion.exe.sha256"
+
+      - name: Upload workflow artifact
+        if: steps.release.outputs.exists != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PCL-Companion-Windows
+          path: |
+            dist/PCL-Companion.exe
+            dist/PCL-Companion.exe.sha256
+          if-no-files-found: error
+
+      - name: Create GitHub release
+        if: steps.release.outputs.exists != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create $env:TAG "dist/PCL-Companion.exe" "dist/PCL-Companion.exe.sha256" --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "PCL Companion $env:TAG" --generate-notes
