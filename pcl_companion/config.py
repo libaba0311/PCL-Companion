@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "PCLCompanion"
 CONFIG_PATH = APP_DIR / "settings.json"
+
+
+def bundled_path(*parts: str) -> Path:
+    """Return a resource path in source checkouts and PyInstaller bundles."""
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
+    return base.joinpath(*parts)
 
 
 @dataclass(slots=True)

@@ -44,9 +44,13 @@ PCL Companion 是独立进程和独立代码库，不复制 PCL 源码、素材�
 | NeoForge/Quilt 部署 | 实验性，尚未广泛验证 |
 | CurseForge 在线目录 | 未接入（不内置私密 API Key） |
 | 断点续传与镜像切换 | 尚未完成 |
-| 独立 EXE 安装包 | 尚未提供，目前需要 Python |
+| 独立 Windows EXE | 从 GitHub Releases 下载 |
 
-## 运行
+## 下载 Windows 版
+
+普通用户请打开 GitHub 仓库右侧的 **Releases**，下载最新版本中的 `PCL-Companion.exe`，双击即可运行，无需安装 Python。Windows 首次运行未知发布者的开源程序时可能显示 SmartScreen 提示；请先核对 Release 中公布的 SHA-256。
+
+## 从源码运行
 
 需要 Windows 与 Python 3.11+：
 

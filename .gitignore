@@ -4,7 +4,7 @@ __pycache__/
 .venv/
 dist/
 build/
-*.spec
+# Generated build output. The maintained PyInstaller spec is committed.
 *.log
 *.part
 .idea/

@@ -14,7 +14,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from PIL import Image, ImageDraw, ImageTk
 
 from pcl_companion import __version__
-from pcl_companion.config import AppSettings
+from pcl_companion.config import AppSettings, bundled_path
 from pcl_companion.models import CatalogProject, InstallTask, MinecraftInstance, PclInstallation, ProjectVersion, VanillaVersion
 from pcl_companion.services.install_engine import InstallEngine
 from pcl_companion.services.mrpack_installer import MrpackError, MrpackInstaller
@@ -39,7 +39,7 @@ class CompanionApp:
         self.root.minsize(min(1040, window_width), min(700, window_height))
         self.root.maxsize(max(window_width, screen_width - 40), max(window_height, screen_height - 60))
         self.root.configure(bg=COLORS["window"])
-        assets_dir = Path(__file__).resolve().parents[2] / "assets"
+        assets_dir = bundled_path("assets")
         icon_path = assets_dir / "app_icon.ico"
         if icon_path.is_file():
             try:
