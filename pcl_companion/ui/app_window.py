@@ -17,6 +17,7 @@ from pcl_companion import __version__
 from pcl_companion.config import AppSettings, bundled_path
 from pcl_companion.models import CatalogProject, InstallTask, MinecraftInstance, PclInstallation, ProjectVersion, VanillaVersion
 from pcl_companion.services.install_engine import InstallEngine
+from pcl_companion.services.loader_service import LoaderError, LoaderService
 from pcl_companion.services.mrpack_installer import MrpackError, MrpackInstaller
 from pcl_companion.services.modrinth_service import CatalogError, ModrinthService
 from pcl_companion.services.pcl_service import PclService
@@ -59,6 +60,7 @@ class CompanionApp:
         self.pcl_service = PclService()
         self.modrinth = ModrinthService()
         self.vanilla = VanillaService()
+        self.loader_service = LoaderService()
         self.mrpack_installer = MrpackInstaller(self.vanilla)
         self.install_engine = InstallEngine()
         self.task_store = TaskStore()
@@ -69,7 +71,8 @@ class CompanionApp:
         self.catalog_projects: list[CatalogProject] = []
         self.catalog_type = "mod"
         self.catalog_type_names = {
-            "vanilla": "原版游戏", "mod": "Mod", "modpack": "整合包", "datapack": "数据包",
+            "vanilla_release": "原版正式版", "vanilla_snapshot": "原版测试版",
+            "mod": "Mod", "modpack": "整合包", "datapack": "数据包",
             "resourcepack": "资源包", "shader": "光影包",
         }
         self.mod_category_names = {
@@ -349,7 +352,8 @@ class CompanionApp:
         category.pack_propagate(False)
         tk.Label(category, text="社区资源", font=(FONT, 9), fg=COLORS["muted"], bg=COLORS["surface"]).pack(anchor="w", padx=16, pady=(18, 8))
         category_items = (
-            ("vanilla", "▣", "原版游戏"), ("mod", "♧", "Mod"), ("modpack", "◇", "整合包"),
+            ("vanilla_release", "▣", "原版正式版"), ("vanilla_snapshot", "⚗", "原版测试版"),
+            ("mod", "♧", "Mod"), ("modpack", "◇", "整合包"),
             ("datapack", "⌘", "数据包"), ("resourcepack", "▧", "资源包"),
             ("shader", "☼", "光影包"),
         )
@@ -474,7 +478,7 @@ class CompanionApp:
         self.task_container.pack(fill="both", expand=True)
         footer = tk.Frame(body, bg=COLORS["window"])
         footer.pack(fill="x", pady=(12, 0))
-        self._button(footer, "清除已取消任务", self._clear_tasks, primary=False).pack(side="right")
+        self._button(footer, "清除失败/取消任务", self._clear_tasks, primary=False).pack(side="right")
         self._render_tasks()
 
     def _build_settings(self) -> None:
@@ -497,7 +501,7 @@ class CompanionApp:
                 font=(FONT, 9), fg=COLORS["text"], bg=COLORS["surface"],
                 activebackground=COLORS["surface"], selectcolor=COLORS["surface_alt"],
             ).pack(side="left", padx=(0, 20))
-        tk.Label(card, text="自定义 .minecraft", font=(FONT, 9, "bold"), fg=COLORS["muted"], bg=COLORS["surface"]).grid(row=4, column=0, sticky="w", pady=(14, 0))
+        tk.Label(card, text="手动选择部署目标（.minecraft 文件夹）", font=(FONT, 9, "bold"), fg=COLORS["muted"], bg=COLORS["surface"]).grid(row=4, column=0, sticky="w", pady=(14, 0))
         self.custom_path_line = self._path_row(card, 5, self.custom_minecraft_path_var, self._choose_custom_minecraft)
         tk.Label(card, text="当前生效目录", font=(FONT, 9, "bold"), fg=COLORS["muted"], bg=COLORS["surface"]).grid(row=6, column=0, sticky="w", pady=(14, 0))
         current = tk.Frame(card, bg=COLORS["surface_alt"])
@@ -600,18 +604,22 @@ class CompanionApp:
         loader = "" if self.loader_var.get() == "全部加载器" else self.loader_var.get()
         category = self.mod_category_names.get(self.mod_category_var.get(), "") if self.catalog_type == "mod" else ""
         self.catalog_status.configure(text="正在连接 Modrinth…", fg=COLORS["warning"])
-        source_name = "Mojang" if self.catalog_type == "vanilla" else "Modrinth"
+        source_name = "Mojang" if self.catalog_type.startswith("vanilla_") else "Modrinth"
         self._start_loading_animation(f"正在连接 {source_name}")
         self.catalog_tree.delete(*self.catalog_tree.get_children())
         self.catalog_generation = uuid.uuid4().hex
-        if self.catalog_type == "vanilla":
-            threading.Thread(target=self._vanilla_catalog_worker, args=(self.catalog_generation, query), daemon=True).start()
+        if self.catalog_type.startswith("vanilla_"):
+            threading.Thread(target=self._vanilla_catalog_worker, args=(self.catalog_generation, query, self.catalog_type), daemon=True).start()
         else:
             threading.Thread(target=self._catalog_worker, args=(self.catalog_generation, query, self.catalog_type, game_version, loader, category, self.catalog_page), daemon=True).start()
 
-    def _vanilla_catalog_worker(self, generation: str, query: str) -> None:
+    def _vanilla_catalog_worker(self, generation: str, query: str, catalog_type: str) -> None:
         try:
             versions = self.vanilla.list_versions(True)
+            if catalog_type == "vanilla_release":
+                versions = [item for item in versions if item.version_type == "release"]
+            else:
+                versions = [item for item in versions if item.version_type != "release"]
             if query:
                 versions = [item for item in versions if query.casefold() in item.version_id.casefold()]
             self.events.put(("vanilla_catalog", (generation, versions)))
@@ -687,7 +695,7 @@ class CompanionApp:
                 fg=COLORS["primary"] if selected else COLORS["muted"],
             )
         self.mod_category_combo.configure(state="readonly" if project_type == "mod" else "disabled")
-        filter_state = "disabled" if project_type == "vanilla" else "readonly"
+        filter_state = "disabled" if project_type.startswith("vanilla_") else "readonly"
         self.loader_var.set("全部加载器")
         self.game_version_var.set("全部版本")
         self.game_version_combo.configure(state=filter_state)
@@ -695,17 +703,17 @@ class CompanionApp:
         for widget in self.game_version_combo.master.winfo_children():
             if isinstance(widget, ttk.Combobox) and widget is not self.game_version_combo and widget is not self.mod_category_combo:
                 widget.configure(state=filter_state)
-        self.catalog_primary_button.configure(text="安装所选原版" if project_type == "vanilla" else "选择版本并下载")
+        self.catalog_primary_button.configure(text="配置并安装所选版本" if project_type.startswith("vanilla_") else "选择版本并下载")
         if search:
             self._search_catalog()
 
     def _previous_catalog_page(self) -> None:
-        if self.catalog_type != "vanilla" and self.catalog_page > 0:
+        if not self.catalog_type.startswith("vanilla_") and self.catalog_page > 0:
             self.catalog_page -= 1
             self._search_catalog(reset_page=False)
 
     def _next_catalog_page(self) -> None:
-        if self.catalog_type == "vanilla":
+        if self.catalog_type.startswith("vanilla_"):
             return
         total_pages = max(1, (self.catalog_total + self.catalog_page_size - 1) // self.catalog_page_size)
         if self.catalog_page + 1 < total_pages:
@@ -713,7 +721,7 @@ class CompanionApp:
             self._search_catalog(reset_page=False)
 
     def _catalog_primary_action(self) -> None:
-        if self.catalog_type == "vanilla":
+        if self.catalog_type.startswith("vanilla_"):
             self._install_selected_vanilla()
         else:
             self._load_selected_versions()
@@ -723,7 +731,7 @@ class CompanionApp:
         if not selected:
             return
         index = int(selected[0])
-        if self.catalog_type == "vanilla":
+        if self.catalog_type.startswith("vanilla_"):
             if index >= len(self.vanilla_versions):
                 return
             item = self.vanilla_versions[index]
@@ -790,7 +798,7 @@ class CompanionApp:
             return None
 
     def _open_selected_project(self) -> None:
-        if self.catalog_type == "vanilla":
+        if self.catalog_type.startswith("vanilla_"):
             selected = self.catalog_tree.selection()
             if selected and int(selected[0]) < len(self.vanilla_versions):
                 version = self.vanilla_versions[int(selected[0])]
@@ -921,9 +929,106 @@ class CompanionApp:
             messagebox.showerror("未找到 PCL", "请先配置 PCL 的 .minecraft 文件夹。")
             return
         version = self.vanilla_versions[int(selected[0])]
-        target = self.installation.minecraft_dir / "versions" / version.version_id
-        if target.exists() and not messagebox.askyesno("版本已存在", f"{version.version_id} 已经存在。是否重新下载基础文件？"):
-            return
+        self.catalog_status.configure(text="正在读取兼容的加载器与光影环境…", fg=COLORS["warning"])
+        threading.Thread(target=self._environment_options_worker, args=(version,), daemon=True).start()
+
+    def _environment_options_worker(self, version: VanillaVersion) -> None:
+        options = self.loader_service.compatible_versions(version.version_id)
+        self.events.put(("environment_options", (version, options)))
+
+    def _show_environment_dialog(self, version: VanillaVersion, options: dict[str, list[str]]) -> None:
+        self.catalog_status.configure(text=f"已读取 Minecraft {version.version_id} 的兼容环境", fg=COLORS["muted"])
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"配置 Minecraft {version.version_id}")
+        dialog.configure(bg=COLORS["surface"])
+        dialog.transient(self.root); dialog.grab_set(); dialog.resizable(False, False)
+        frame = tk.Frame(dialog, bg=COLORS["surface"], padx=24, pady=20)
+        frame.pack(fill="both", expand=True)
+        tk.Label(frame, text=f"Minecraft {version.version_id}", font=(FONT, 14, "bold"), fg=COLORS["text"], bg=COLORS["surface"]).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 16))
+        tk.Label(frame, text="实例名称", font=(FONT, 9, "bold"), fg=COLORS["muted"], bg=COLORS["surface"]).grid(row=1, column=0, sticky="w")
+        name_var = tk.StringVar(value=f"Minecraft {version.version_id}")
+        tk.Entry(frame, textvariable=name_var, width=34, font=(FONT, 10), fg=COLORS["text"], bg=COLORS["surface_alt"], insertbackground=COLORS["text"], relief="flat").grid(row=2, column=0, columnspan=2, sticky="ew", ipady=7, pady=(5, 12))
+        available_loaders = ["原版"] + [name for name in ("Fabric", "Forge", "NeoForge", "Quilt") if options.get(name)]
+        loader_var = tk.StringVar(value="原版")
+        loader_version_var = tk.StringVar(value="无需加载器")
+        graphics_var = tk.StringVar(value="无")
+        graphics_version_var = tk.StringVar(value="无需附加环境")
+        tk.Label(frame, text="加载器", font=(FONT, 9, "bold"), fg=COLORS["muted"], bg=COLORS["surface"]).grid(row=3, column=0, sticky="w")
+        tk.Label(frame, text="兼容版本", font=(FONT, 9, "bold"), fg=COLORS["muted"], bg=COLORS["surface"]).grid(row=3, column=1, sticky="w", padx=(12, 0))
+        loader_combo = ttk.Combobox(frame, textvariable=loader_var, values=available_loaders, state="readonly", width=18, style="App.TCombobox")
+        loader_combo.grid(row=4, column=0, sticky="ew", pady=(5, 12))
+        loader_version_combo = ttk.Combobox(frame, textvariable=loader_version_var, values=("无需加载器",), state="disabled", width=22, style="App.TCombobox")
+        loader_version_combo.grid(row=4, column=1, sticky="ew", padx=(12, 0), pady=(5, 12))
+        graphics_values = ["无"] + (["Iris"] if options.get("Iris") else []) + (["OptiFine（手动安装）"] if options.get("OptiFine") else [])
+        tk.Label(frame, text="光影必要环境", font=(FONT, 9, "bold"), fg=COLORS["muted"], bg=COLORS["surface"]).grid(row=5, column=0, sticky="w")
+        tk.Label(frame, text="兼容版本", font=(FONT, 9, "bold"), fg=COLORS["muted"], bg=COLORS["surface"]).grid(row=5, column=1, sticky="w", padx=(12, 0))
+        graphics_combo = ttk.Combobox(frame, textvariable=graphics_var, values=graphics_values, state="readonly", width=18, style="App.TCombobox")
+        graphics_combo.grid(row=6, column=0, sticky="ew", pady=(5, 8))
+        graphics_version_combo = ttk.Combobox(frame, textvariable=graphics_version_var, values=("无需附加环境",), state="disabled", width=22, style="App.TCombobox")
+        graphics_version_combo.grid(row=6, column=1, sticky="ew", padx=(12, 0), pady=(5, 8))
+        note_var = tk.StringVar(value="列表只显示当前 Minecraft 版本可用的加载器版本。")
+        tk.Label(frame, textvariable=note_var, font=(FONT, 9), fg=COLORS["muted"], bg=COLORS["surface"], wraplength=520, justify="left").grid(row=7, column=0, columnspan=2, sticky="w", pady=(4, 16))
+
+        def update_loader(_event=None) -> None:
+            values = options.get(loader_var.get(), [])
+            if values:
+                loader_version_combo.configure(values=values, state="readonly")
+                loader_version_var.set(values[0])
+            else:
+                loader_version_combo.configure(values=("无需加载器",), state="disabled")
+                loader_version_var.set("无需加载器")
+
+        def update_graphics(_event=None) -> None:
+            if graphics_var.get() == "Iris":
+                loader_var.set("Fabric"); update_loader()
+                values = options.get("Iris", [])
+                graphics_version_combo.configure(values=values, state="readonly")
+                graphics_version_var.set(values[0])
+                note_var.set("Iris 需要 Fabric；已自动切换并只显示兼容版本。")
+            elif graphics_var.get().startswith("OptiFine"):
+                values = options.get("OptiFine", [])
+                graphics_version_combo.configure(values=values, state="readonly")
+                graphics_version_var.set(values[0])
+                note_var.set("OptiFine 官方下载链路不允许可靠直链，本版不会代替官方重新分发；实例创建后请手动安装。")
+            else:
+                graphics_version_combo.configure(values=("无需附加环境",), state="disabled")
+                graphics_version_var.set("无需附加环境")
+                note_var.set("列表只显示当前 Minecraft 版本可用的加载器版本。")
+
+        loader_combo.bind("<<ComboboxSelected>>", update_loader)
+        graphics_combo.bind("<<ComboboxSelected>>", update_graphics)
+
+        def install() -> None:
+            instance_name = name_var.get().strip()
+            errors = self.install_engine.validate_target(self.installation.minecraft_dir, instance_name)  # type: ignore[union-attr]
+            if errors:
+                messagebox.showerror("无法安装", "\n".join(errors), parent=dialog); return
+            loader = "" if loader_var.get() == "原版" else loader_var.get()
+            loader_version = "" if not loader else loader_version_var.get()
+            if loader and loader_version not in options.get(loader, []):
+                messagebox.showerror("版本不兼容", "请选择列表中与当前 Minecraft 兼容的加载器版本。", parent=dialog); return
+            graphics = "Iris" if graphics_var.get() == "Iris" else ""
+            graphics_version = graphics_version_var.get() if graphics else ""
+            task = InstallTask(task_id=uuid.uuid4().hex[:12], name=instance_name, source="Mojang", state="安装中", progress=0, detail=f"{version.version_id} · {loader or '原版'} {loader_version}".strip(), project_type="vanilla")
+            self.tasks.append(task); self.task_store.save(self.tasks); dialog.destroy(); self.show_page("tasks")
+            threading.Thread(target=self._custom_vanilla_install_worker, args=(task, version, loader, loader_version, graphics, graphics_version), daemon=True).start()
+
+        actions = tk.Frame(frame, bg=COLORS["surface"]); actions.grid(row=8, column=0, columnspan=2, sticky="e")
+        self._button(actions, "取消", dialog.destroy, primary=False, width=8).pack(side="left", padx=(0, 8))
+        self._button(actions, "开始安装", install, width=10).pack(side="left")
+        dialog.update_idletasks()
+        dialog.geometry(f"+{self.root.winfo_rootx()+180}+{self.root.winfo_rooty()+100}")
+
+    def _custom_vanilla_install_worker(self, task: InstallTask, version: VanillaVersion, loader: str, loader_version: str, graphics: str, graphics_version: str) -> None:
+        try:
+            def report(value: float) -> None:
+                self.events.put(("install_progress", (task.task_id, value * .9, "正在安装游戏环境")))
+            path = self.mrpack_installer.install_custom_instance(self.installation.minecraft_dir, version, task.name, loader, loader_version, report)  # type: ignore[union-attr]
+            if graphics == "Iris":
+                self.loader_service.install_iris(version.version_id, graphics_version, path)
+            self.events.put(("install_done", (task.task_id, path)))
+        except (MrpackError, LoaderError, OSError) as exc:
+            self.events.put(("install_error", (task.task_id, str(exc))))
         task = InstallTask(
             task_id=uuid.uuid4().hex[:12], name=f"Minecraft {version.version_id}",
             source="Mojang", state="安装中", detail="正在下载官方客户端与版本 JSON",
@@ -1047,6 +1152,7 @@ class CompanionApp:
             head = tk.Frame(card, bg=COLORS["surface"])
             head.pack(fill="x")
             tk.Label(head, text=task.name, font=(FONT, 11, "bold"), fg=COLORS["text"], bg=COLORS["surface"]).pack(side="left")
+            self._button(head, "删除", lambda value=task: self._delete_task(value), primary=False, width=6).pack(side="right", padx=(10, 0))
             state_color = COLORS["success"] if task.state in {"下载完成", "安装完成"} else COLORS["danger"] if task.state == "失败" else COLORS["warning"]
             tk.Label(head, text=task.state, font=(FONT, 9, "bold"), fg=state_color, bg=COLORS["surface"]).pack(side="right")
             detail_row = tk.Frame(card, bg=COLORS["surface"])
@@ -1059,6 +1165,8 @@ class CompanionApp:
                 self._button(detail_row, "重试部署", lambda value=task: self._retry_mrpack_install(value), width=11).pack(side="right", padx=(12, 0))
             elif task.state == "安装完成":
                 self._button(detail_row, "打开实例目录", lambda value=task: os.startfile(value.detail), primary=False, width=12).pack(side="right", padx=(12, 0))
+            elif task.state == "下载完成" and Path(str(possible_path)).is_file():
+                self._button(detail_row, "打开文件位置", lambda value=task: self._open_task_path(value), primary=False, width=12).pack(side="right", padx=(12, 0))
             progress = ttk.Progressbar(card, value=task.progress, maximum=1, style="App.Horizontal.TProgressbar")
             progress.pack(fill="x")
 
@@ -1067,6 +1175,29 @@ class CompanionApp:
         self.task_store.save(self.tasks)
         self._update_stats()
         self._render_tasks()
+
+    def _delete_task(self, task: InstallTask) -> None:
+        if task.state in {"下载中", "部署中", "安装中"}:
+            messagebox.showwarning("任务正在进行", "进行中的任务不能删除，请等待完成或失败。")
+            return
+        if not messagebox.askyesno("删除任务记录", f"确定删除“{task.name}”的任务记录吗？\n\n不会删除已经下载的文件或已安装实例。"):
+            return
+        self.tasks = [item for item in self.tasks if item.task_id != task.task_id]
+        self.task_store.save(self.tasks)
+        self._update_stats()
+        self._render_tasks()
+
+    def _open_task_path(self, task: InstallTask) -> None:
+        path = Path(task.file_path or task.detail)
+        try:
+            if path.is_file():
+                subprocess.Popen(["explorer.exe", "/select,", str(path)])
+            elif path.is_dir():
+                os.startfile(path)
+            else:
+                messagebox.showerror("文件不存在", f"找不到文件：\n{path}")
+        except OSError as exc:
+            messagebox.showerror("无法打开", str(exc))
 
     def _launch_pcl(self) -> None:
         if not self.installation:
@@ -1151,6 +1282,9 @@ class CompanionApp:
                 elif event == "vanilla_catalog":
                     generation, versions = payload
                     self._render_vanilla_catalog(generation, versions)
+                elif event == "environment_options":
+                    version, options = payload
+                    self._show_environment_dialog(version, options)
                 elif event == "catalog_error":
                     self._stop_loading_animation()
                     self.catalog_status.configure(text=str(payload), fg=COLORS["danger"])

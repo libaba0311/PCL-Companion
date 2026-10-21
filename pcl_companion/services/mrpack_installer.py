@@ -102,6 +102,36 @@ class MrpackInstaller:
                 raise MrpackError("连接 Modrinth CDN 时中断。已下载文件已缓存，请点击“重试部署”。") from exc
             raise MrpackError(f"部署整合包失败：{exc}") from exc
 
+    def install_custom_instance(
+        self, minecraft_dir: Path, version: VanillaVersion, instance_name: str,
+        loader: str = "", loader_version: str = "", progress=None,
+    ) -> Path:
+        """Install a base game plus an explicitly selected compatible loader."""
+        target = minecraft_dir / "versions" / instance_name
+        if target.exists():
+            raise MrpackError("同名实例已经存在，请更换实例名称")
+        try:
+            if progress:
+                progress(.08)
+            self.vanilla.install_base(minecraft_dir, version)
+            info = {"minecraft": version.version_id, "fabric": "", "quilt": "", "forge": "", "neoforge": ""}
+            key = {"Fabric": "fabric", "Quilt": "quilt", "Forge": "forge", "NeoForge": "neoforge"}.get(loader)
+            if key:
+                info[key] = loader_version
+            if progress:
+                progress(.45)
+            profile = self._profile_json(instance_name, info, minecraft_dir)
+            target.mkdir(parents=True, exist_ok=False)
+            (target / f"{instance_name}.json").write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
+            if progress:
+                progress(1.0)
+            return target
+        except (OSError, requests.RequestException, VanillaError, KeyError, ValueError) as exc:
+            shutil.rmtree(target, ignore_errors=True)
+            if isinstance(exc, MrpackError):
+                raise
+            raise MrpackError(f"自定义环境安装失败：{exc}") from exc
+
     def _profile_json(self, instance_name: str, info: dict, minecraft_dir: Path) -> dict:
         if info["fabric"]:
             url = f"https://meta.fabricmc.net/v2/versions/loader/{info['minecraft']}/{info['fabric']}/profile/json"

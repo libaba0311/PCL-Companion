@@ -9,6 +9,7 @@ from unittest.mock import Mock
 
 from pcl_companion.models import CatalogProject
 from pcl_companion.services.install_engine import InstallEngine
+from pcl_companion.services.loader_service import LoaderService
 from pcl_companion.services.modrinth_service import ModrinthService
 from pcl_companion.services.mrpack_installer import MrpackError, MrpackInstaller
 from pcl_companion.services.pcl_service import PclService
@@ -73,6 +74,32 @@ class InstallEngineTests(unittest.TestCase):
             self.assertIn("实例名称不能为空", engine.validate_target(root, " "))
             self.assertIn("同名实例已经存在", engine.validate_target(root, "Existing"))
             self.assertIn("实例名称包含 Windows 不允许的字符", engine.validate_target(root, "Bad/Name"))
+
+
+class LoaderServiceTests(unittest.TestCase):
+    def test_filters_forge_versions_for_selected_minecraft(self) -> None:
+        service = LoaderService()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"1.20.1": ["1.20.1-47.1.0", "1.20.1-47.2.1"]}
+        service.session.get = Mock(return_value=response)
+        self.assertEqual(service._forge("1.20.1"), ["47.2.1", "47.1.0"])
+
+    def test_neoforge_uses_minecraft_compatible_prefix(self) -> None:
+        service = LoaderService()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.text = "<metadata><versioning><versions><version>21.0.10</version><version>21.1.20</version><version>21.1.21</version></versions></versioning></metadata>"
+        service.session.get = Mock(return_value=response)
+        self.assertEqual(service._neoforge("1.21.1"), ["21.1.21", "21.1.20"])
+
+    def test_optifine_filters_selected_minecraft(self) -> None:
+        service = LoaderService()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.text = "OptiFine_1.20.1_HD_U_I6.jar OptiFine_1.21.1_HD_U_J1.jar"
+        service.session.get = Mock(return_value=response)
+        self.assertEqual(service._optifine("1.20.1"), ["HD_U_I6"])
 
 
 class ModrinthTests(unittest.TestCase):

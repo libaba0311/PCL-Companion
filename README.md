@@ -13,9 +13,11 @@ PCL Companion 是一款独立、免费、开源的 Windows 下载与实例部署
 - 按 Minecraft 版本、加载器与分类筛选，支持分页、图片缓存和完整项目介绍；
 - 下载项目原始文件并进行 SHA-512 校验；
 - 浏览 Mojang 官方原版版本清单，安装客户端 JAR 与版本 JSON；
+- 将原版正式版与测试版分开浏览，并只列出与所选 Minecraft 兼容的 Fabric、Forge、NeoForge、Quilt 与 Iris 版本；
 - 解析 `.mrpack`，部署 Fabric 与 Forge 整合包；
 - 扫描原版、Fabric、Forge、NeoForge、Quilt 本地实例；
 - 保存任务和设置，显示安装阶段与 PCL 手动刷新指引；
+- 可逐条删除任务记录，并可从下载完成的任务直接打开文件位置；
 - 完全本地运行，无账号、广告、遥测、付费功能或自建后端。
 
 ## 与 PCL 的边界

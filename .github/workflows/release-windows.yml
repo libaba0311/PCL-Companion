@@ -50,31 +50,26 @@ jobs:
           exit 0
 
       - name: Install dependencies
-        if: steps.release.outputs.exists != 'true'
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
       - name: Run tests
-        if: steps.release.outputs.exists != 'true'
         run: |
           python -m compileall -q app.py pcl_companion
           python -m unittest discover -s tests -v
 
       - name: Build executable
-        if: steps.release.outputs.exists != 'true'
         shell: pwsh
         run: ./build.ps1
 
       - name: Write SHA-256 checksum
-        if: steps.release.outputs.exists != 'true'
         shell: pwsh
         run: |
           $hash = (Get-FileHash -Algorithm SHA256 "dist/PCL-Companion.exe").Hash.ToLowerInvariant()
           "$hash  PCL-Companion.exe" | Set-Content -NoNewline "dist/PCL-Companion.exe.sha256"
 
       - name: Upload workflow artifact
-        if: steps.release.outputs.exists != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: PCL-Companion-Windows
